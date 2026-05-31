@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>H4LongerAsset</title>
+    <link rel="stylesheet" href="./styles.css?v=20260531-20" />
+  </head>
+  <body>
+    <main class="dashboard-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">15-minute delayed global market dashboard</p>
+          <h1>H4LongerAsset</h1>
+        </div>
+        <div class="status-strip" aria-label="Market update status">
+          <span class="status-dot"></span>
+          <span id="updatedAt">Updated --</span>
+        </div>
+      </header>
+
+      <section class="market-state" aria-label="Market state summary">
+          <article>
+            <span>리스크모드</span>
+            <strong id="riskMode">Neutral</strong>
+          </article>
+          <article>
+            <span>코스피지수</span>
+            <strong id="kospiValue">--</strong>
+          </article>
+          <article>
+            <span>나스닥지수</span>
+            <strong id="nasdaqValue">--</strong>
+          </article>
+          <article>
+            <span>US10Y</span>
+            <strong id="us10yValue">--</strong>
+          </article>
+          <article>
+            <span>USDKRW</span>
+            <strong id="usdkrwValue">--</strong>
+          </article>
+      </section>
+
+      <section class="primary-nav" aria-label="Dashboard categories">
+        <div class="page-tabs" id="pageTabs"></div>
+      </section>
+
+      <div class="page-view" id="marketDashboardView">
+        <section class="controls market-controls" aria-label="Market dashboard selection">
+          <div class="subnav-block">
+            <div class="asset-tabs" id="assetTabs"></div>
+          </div>
+          <div class="chart-controls">
+            <div class="filter-group" id="marketIntervalFilterGroup">
+              <span>기준봉</span>
+              <button class="filter-select" id="marketIntervalSelect" data-filter-toggle="market-interval" type="button">선택</button>
+              <div class="filter-menu" id="intervalTabs" hidden></div>
+            </div>
+            <div class="filter-group">
+              <span>기간</span>
+              <button class="filter-select" id="marketSpanSelect" data-filter-toggle="market-span" type="button">선택</button>
+              <div class="filter-menu" id="spanTabs" hidden></div>
+            </div>
+            <div class="filter-group" id="volumeFilterGroup">
+              <span>거래지표</span>
+              <button class="filter-select" id="volumeModeSelect" data-filter-toggle="volume" type="button">선택</button>
+              <div class="filter-menu volume-tabs" id="volumeModeTabs" hidden></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="chart-panel expanded-panel" id="expandedPanel" aria-label="Selected instrument chart">
+            <div class="chart-header">
+              <div>
+                <p id="selectedGroup">Global Indices</p>
+                <h2 id="selectedName">S&P 500</h2>
+                <small id="zoomHint">Drag to zoom</small>
+              </div>
+              <div class="quote-box">
+                <strong id="selectedPrice">--</strong>
+                <span id="selectedChange">--</span>
+              </div>
+            </div>
+            <div class="ma-legend" id="maLegend"></div>
+            <div id="mainChart" class="chart"></div>
+            <div id="chartTooltip" class="chart-tooltip" hidden></div>
+        </section>
+
+        <section class="mini-section" aria-label="Instrument mini charts">
+          <div class="section-header">
+            <h2 id="miniTitle">Global Indices</h2>
+            <div class="mini-controls">
+              <div class="range-tabs" id="miniIntervalTabs"></div>
+              <div class="range-tabs" id="miniSpanTabs"></div>
+            </div>
+          </div>
+          <div class="mini-chart-grid" id="miniChartGrid"></div>
+        </section>
+      </div>
+
+      <section class="sector-view page-view" id="sectorView" hidden aria-label="Sector dashboard">
+        <section class="controls sector-subnav" aria-label="Sector selection">
+          <div class="subnav-block">
+            <div class="asset-tabs" id="sectorSubTabs"></div>
+          </div>
+        </section>
+        <div class="sector-header">
+          <div>
+            <span class="control-label">Sector</span>
+            <h2>KOSPI Market Map</h2>
+          </div>
+          <div class="sector-controls">
+            <div class="filter-group" id="sectorMarketFilterGroup">
+              <span>지수</span>
+              <button class="filter-select" id="sectorMarketSelect" data-filter-toggle="market" type="button">선택</button>
+              <div class="filter-menu" id="sectorMarketTabs" hidden></div>
+            </div>
+            <div class="filter-group" id="sectorActionRegionFilterGroup" hidden>
+              <span>지역</span>
+              <div class="region-tabs" id="sectorActionRegionTabs"></div>
+            </div>
+            <div class="filter-group" id="sectorViewFilterGroup">
+              <span>종류</span>
+              <button class="filter-select" id="sectorViewSelect" data-filter-toggle="view" type="button">선택</button>
+              <div class="filter-menu" id="sectorViewTabs" hidden></div>
+            </div>
+            <div class="filter-group" id="sectorSpanFilterGroup">
+              <span>시계열</span>
+              <button class="filter-select" id="sectorSpanSelect" data-filter-toggle="span" type="button">선택</button>
+              <div class="filter-menu" id="sectorSpanTabs" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="marketmap-meta" id="sectorMapMeta">
+          <span id="sectorMapDescription">Box size: market-cap tier</span>
+          <span>Color: selected-period return</span>
+          <span id="sectorUpdatedAt">Updated --</span>
+        </div>
+        <div class="marketmap-legend" id="sectorMapLegend" aria-label="Market map color scale">
+          <span>-3%</span>
+          <i class="legend-down-3"></i>
+          <i class="legend-down-2"></i>
+          <i class="legend-down-1"></i>
+          <i class="legend-flat"></i>
+          <i class="legend-up-1"></i>
+          <i class="legend-up-2"></i>
+          <i class="legend-up-3"></i>
+          <span>+3%</span>
+        </div>
+        <div id="marketMapBlock">
+          <div class="marketmap" id="sectorMarketMap"></div>
+        </div>
+        <section class="rank-panel" id="sectorPerformancePanel" aria-label="Sector performance ranking">
+          <div class="rank-panel-header">
+            <div>
+              <span class="control-label">Sector Leadership</span>
+              <h3 id="sectorPerformanceTitle">주도섹터</h3>
+            </div>
+            <span id="sectorPerformanceMeta">시총가중 성과</span>
+          </div>
+          <div class="rank-table-wrap">
+            <table class="rank-table performance-table">
+              <thead>
+                <tr>
+                  <th>순위</th>
+                  <th>섹터</th>
+                  <th>시총</th>
+                  <th>종목수</th>
+                  <th>대표종목</th>
+                  <th><button data-sector-performance-sort="1d" type="button">1D</button></th>
+                  <th><button data-sector-performance-sort="1w" type="button">1W</button></th>
+                  <th><button data-sector-performance-sort="1m" type="button">1M</button></th>
+                  <th><button data-sector-performance-sort="3m" type="button">3M</button></th>
+                  <th><button data-sector-performance-sort="6m" type="button">6M</button></th>
+                  <th><button data-sector-performance-sort="ytd" type="button">YTD</button></th>
+                  <th><button data-sector-performance-sort="1y" type="button">1Y</button></th>
+                </tr>
+              </thead>
+              <tbody id="sectorPerformanceTable"></tbody>
+            </table>
+          </div>
+          <div class="mapping-panel" id="sectorMappingPanel">
+            <div class="rank-panel-header">
+              <div>
+                <span class="control-label">Mapping Table</span>
+                <h3>섹터 매핑 기준</h3>
+              </div>
+              <span>원 업종명 기준</span>
+            </div>
+            <div class="rank-table-wrap">
+              <table class="rank-table mapping-table">
+                <thead>
+                  <tr>
+                    <th>표준 섹터</th>
+                    <th>포함한 원 업종명</th>
+                  </tr>
+                </thead>
+                <tbody id="sectorMappingTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+        <section class="rank-panel" id="sectorRankPanel" aria-label="Market capitalization ranking">
+          <div class="rank-panel-header">
+            <div>
+              <span class="control-label">Market Cap Ranking</span>
+              <h3 id="sectorRankTitle">시가총액 순위</h3>
+            </div>
+            <span id="sectorRankMeta">Top 50</span>
+          </div>
+          <div class="rank-table-wrap">
+            <table class="rank-table">
+              <thead>
+                <tr>
+                  <th>순위</th>
+                  <th>기업명</th>
+                  <th>티커</th>
+                  <th>시총</th>
+                  <th>순위변동</th>
+                </tr>
+              </thead>
+              <tbody id="sectorRankTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./data.js?v=20260531-3"></script>
+    <script src="./app.js?v=20260531-21"></script>
+  </body>
+</html>

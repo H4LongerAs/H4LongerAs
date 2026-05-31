@@ -58,6 +58,15 @@ const sectorSpans = [
 
 const sectorPerformancePeriods = sectorSpans;
 
+const sectorComparisonPeriods = [
+  { id: "1m", label: "1M" },
+  { id: "3m", label: "3M" },
+  { id: "6m", label: "6M" },
+  { id: "ytd", label: "YTD" },
+];
+
+const sectorComparisonColors = ["#2563eb", "#16a34a", "#dc2626"];
+
 const sectorActionRegions = [
   { id: "kr", label: "한국" },
   { id: "us", label: "미국" },
@@ -264,6 +273,8 @@ const state = {
   sectorActionRegionId: "kr",
   sectorPerformanceSortKey: "",
   sectorPerformanceSortDirection: "",
+  sectorComparisonSpanId: "6m",
+  sectorComparisonSectors: [],
   sectorMappingRawSector: "",
   sectorMappingStandardSector: "",
   volumeModeId: "volume",
@@ -287,6 +298,8 @@ const persistedStateKeys = [
   "sectorActionRegionId",
   "sectorPerformanceSortKey",
   "sectorPerformanceSortDirection",
+  "sectorComparisonSpanId",
+  "sectorComparisonSectors",
   "sectorMappingRawSector",
   "sectorMappingStandardSector",
   "volumeModeId",
@@ -295,6 +308,15 @@ const persistedStateKeys = [
 ];
 
 const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function restoreDashboardState() {
   try {
@@ -487,6 +509,10 @@ function getSectorActionMarket() {
   return state.sectorActionRegionId === "us" ? getUsCombinedMarket() : getKoreanCombinedMarket();
 }
 
+function hasSectorMappingTable(market) {
+  return ["kr-combined", "us-combined"].includes(market?.id);
+}
+
 function capWeightedChange(items, periodId, cap = 0.2) {
   return capWeights(items, cap).reduce((sum, entry) => {
     return sum + Number(entry.item.changes?.[periodId] ?? 0) * entry.weight;
@@ -563,6 +589,137 @@ function topSectorContributors(items, periodId, market) {
       return `<span>${sectorDisplayName(item, market)} <em class="${percentClass(impact)}">${sign}${impact.toFixed(2)}%p</em></span>`;
     })
     .join("");
+}
+
+function getBenchmarkRows(market) {
+  if (market.id !== "kr-combined") return [];
+  const benchmarkIds = ["kospi200", "kosdaq150"];
+  return getSectorMarkets()
+    .filter((sourceMarket) => benchmarkIds.includes(sourceMarket.id))
+    .map((sourceMarket) => {
+      const row = {
+        sector: sourceMarket.label,
+        marketCap: (sourceMarket.items || []).reduce((sum, item) => sum + Number(item.marketCap || 0), 0),
+        count: sourceMarket.items?.length || 0,
+        items: sourceMarket.items || [],
+        changes: {},
+        leader: null,
+        isBenchmark: true,
+      };
+      sectorPerformancePeriods.forEach((period) => {
+        row.changes[period.id] = capWeightedChange(row.items, period.id);
+      });
+      row.leader = row.items.slice().sort((a, b) => Number(b.marketCap || 0) - Number(a.marketCap || 0))[0];
+      return row;
+    });
+}
+
+function getSectorBoardRows(market) {
+  return [...getSectorPerformanceRows(market), ...getBenchmarkRows(market)];
+}
+
+function fallbackComparisonPeriodsForSpan(spanId) {
+  if (spanId === "1m") return [{ id: "start", label: "Start" }, { id: "1m", label: "1M" }];
+  if (spanId === "3m") return [{ id: "start", label: "Start" }, { id: "1m", label: "1M" }, { id: "3m", label: "3M" }];
+  if (spanId === "6m") {
+    return [
+      { id: "start", label: "Start" },
+      { id: "1m", label: "1M" },
+      { id: "3m", label: "3M" },
+      { id: "6m", label: "6M" },
+    ];
+  }
+  return [{ id: "start", label: "Start" }, { id: "ytd", label: "YTD" }];
+}
+
+function normalizeSectorHistory(item) {
+  return (item.history || [])
+    .map((row) => {
+      if (Array.isArray(row)) return { t: Number(row[0]), c: Number(row[1]) };
+      return { t: Number(row.t), c: Number(row.c) };
+    })
+    .filter((row) => row.t && row.c)
+    .sort((a, b) => a.t - b.t);
+}
+
+function sectorComparisonStartTime(items, spanId) {
+  const latest = Math.max(
+    ...items.flatMap((item) => {
+      const history = normalizeSectorHistory(item);
+      return history.length ? [history.at(-1).t] : [];
+    }),
+    0,
+  );
+  if (!latest) return 0;
+  const start = new Date(latest);
+  if (spanId === "ytd") {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+    return start.getTime();
+  }
+  const months = { "1m": 1, "3m": 3, "6m": 6 }[spanId] || 6;
+  start.setMonth(start.getMonth() - months);
+  return start.getTime();
+}
+
+function weeklySample(points) {
+  const buckets = new Map();
+  points.forEach((point) => {
+    buckets.set(toBucketKey(point.t, "week"), point);
+  });
+  return [...buckets.values()].sort((a, b) => a.t - b.t);
+}
+
+function sectorRelativeSeries(row, spanId) {
+  const weightedItems = capWeights(row.items || []);
+  const startTime = sectorComparisonStartTime(
+    weightedItems.map((entry) => entry.item),
+    spanId,
+  );
+  if (!startTime || !weightedItems.length) return [];
+  const byDate = new Map();
+  weightedItems.forEach(({ item, weight }) => {
+    const history = normalizeSectorHistory(item).filter((point) => point.t >= startTime);
+    if (history.length < 2) return;
+    const baseline = history[0].c;
+    if (!baseline) return;
+    history.forEach((point) => {
+      const key = new Date(point.t).toISOString().slice(0, 10);
+      const entry = byDate.get(key) || { t: point.t, weightedReturn: 0, weight: 0 };
+      entry.t = Math.max(entry.t, point.t);
+      entry.weightedReturn += ((point.c / baseline - 1) * 100) * weight;
+      entry.weight += weight;
+      byDate.set(key, entry);
+    });
+  });
+  const daily = [...byDate.values()]
+    .filter((entry) => entry.weight > 0)
+    .map((entry) => ({ t: entry.t, value: entry.weightedReturn / entry.weight }))
+    .sort((a, b) => a.t - b.t);
+  if (daily.length < 2) return [];
+  const normalized = daily.map((point) => ({ ...point, value: point.value - daily[0].value }));
+  return spanId === "1m" ? normalized : weeklySample(normalized);
+}
+
+function fallbackRelativeSeries(row, spanId) {
+  return fallbackComparisonPeriodsForSpan(spanId).map((period, index) => ({
+    t: index,
+    label: period.label,
+    value: period.id === "start" ? 0 : Number(row.changes[period.id] || 0),
+  }));
+}
+
+function selectedComparisonRows(rows) {
+  const bySector = new Map(rows.map((row) => [row.sector, row]));
+  const stored = Array.isArray(state.sectorComparisonSectors) ? state.sectorComparisonSectors : [];
+  const selected = stored.map((sector) => bySector.get(sector)).filter(Boolean).slice(0, 3);
+  if (selected.length) {
+    state.sectorComparisonSectors = selected.map((row) => row.sector);
+    return selected;
+  }
+  const defaults = rows.filter((row) => !row.isBenchmark).slice(0, 3);
+  state.sectorComparisonSectors = defaults.map((row) => row.sector);
+  return defaults;
 }
 
 function toBucketKey(timestamp, type) {
@@ -1062,7 +1219,7 @@ function renderSectorPerformanceTable(market) {
   const panel = document.getElementById("sectorPerformancePanel");
   if (panel) panel.hidden = state.sectorSectionId !== "actions";
   if (state.sectorSectionId !== "actions") return;
-  const rows = getSectorPerformanceRows(market);
+  const rows = getSectorBoardRows(market);
   const contributionPeriod = activeContributionPeriod();
   const contributionLabel = sectorPerformancePeriods.find((period) => period.id === contributionPeriod)?.label || "1D";
   document.getElementById("sectorPerformanceTitle").textContent = `${market.label} 주도섹터`;
@@ -1073,12 +1230,17 @@ function renderSectorPerformanceTable(market) {
     const button = document.querySelector(`[data-sector-performance-sort="${period.id}"]`);
     if (button) button.textContent = `${period.label}${sectorPerformanceSortMark(period.id)}`;
   });
+  selectedComparisonRows(rows);
   table.innerHTML = rows
     .map((row, index) => {
-      const leader = row.leader ? sectorDisplayName(row.leader, market) : "-";
-      return `<tr>
+      const selected = Array.isArray(state.sectorComparisonSectors) && state.sectorComparisonSectors.includes(row.sector);
+      return `<tr class="${row.isBenchmark ? "benchmark-row" : ""} ${selected ? "compare-selected" : ""}">
         <td class="rank-number">${index + 1}</td>
-        <td class="rank-name">${row.sector}</td>
+        <td class="rank-name">
+          <button class="sector-compare-toggle ${selected ? "active" : ""}" data-sector-compare="${encodeURIComponent(
+            row.sector,
+          )}" type="button">${escapeHtml(row.sector)}</button>
+        </td>
         <td class="contributor-cell">${topSectorContributors(row.items, contributionPeriod, market)}</td>
         ${sectorPerformancePeriods
           .map((period) => `<td class="${percentClass(row.changes[period.id])}">${formatPercent(row.changes[period.id])}</td>`)
@@ -1086,15 +1248,135 @@ function renderSectorPerformanceTable(market) {
       </tr>`;
     })
     .join("");
+  renderSectorComparisonChart(rows);
   renderSectorMappingTable(market);
+}
+
+function renderSectorComparisonChart(rows) {
+  const panel = document.getElementById("sectorComparePanel");
+  const chart = document.getElementById("sectorCompareChart");
+  const selection = document.getElementById("sectorCompareSelection");
+  const tabs = document.getElementById("sectorCompareSpanTabs");
+  if (!panel || !chart || !selection || !tabs) return;
+  panel.hidden = state.sectorSectionId !== "actions";
+  if (panel.hidden) return;
+  if (!sectorComparisonPeriods.some((period) => period.id === state.sectorComparisonSpanId)) {
+    state.sectorComparisonSpanId = "6m";
+  }
+  tabs.innerHTML = sectorComparisonPeriods
+    .map(
+      (period) =>
+        `<button class="tab-button ${state.sectorComparisonSpanId === period.id ? "active" : ""}" data-sector-comparison-span="${period.id}" type="button">${period.label}</button>`,
+    )
+    .join("");
+  const selectedRows = selectedComparisonRows(rows);
+  selection.innerHTML = selectedRows
+    .map((row, index) => {
+      const color = sectorComparisonColors[index % sectorComparisonColors.length];
+      return `<span class="compare-chip" style="--compare-color:${color}">${escapeHtml(row.sector)}</span>`;
+    })
+    .join("");
+  if (!selectedRows.length) {
+    chart.innerHTML = `<div class="empty-chart">비교할 섹터를 선택하세요</div>`;
+    return;
+  }
+  const historySeries = selectedRows.map((row, index) => ({
+    name: row.sector,
+    color: sectorComparisonColors[index % sectorComparisonColors.length],
+    points: sectorRelativeSeries(row, state.sectorComparisonSpanId),
+  }));
+  const hasHistorySeries = historySeries.some((line) => line.points.length >= 2);
+  const fallbackPeriods = fallbackComparisonPeriodsForSpan(state.sectorComparisonSpanId);
+  const series = hasHistorySeries
+    ? historySeries.filter((line) => line.points.length >= 2)
+    : selectedRows.map((row, index) => ({
+        name: row.sector,
+        color: sectorComparisonColors[index % sectorComparisonColors.length],
+        points: fallbackRelativeSeries(row, state.sectorComparisonSpanId),
+      }));
+  const width = Math.max(chart.clientWidth || 900, 320);
+  const height = Math.max(chart.clientHeight || 300, 240);
+  const pad = { top: 28, right: 64, bottom: 44, left: 24 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const values = series.flatMap((line) => line.points.map((point) => point.value));
+  const times = series.flatMap((line) => line.points.map((point) => point.t));
+  let min = Math.min(0, ...values);
+  let max = Math.max(0, ...values);
+  const padding = Math.max((max - min) * 0.16, 1);
+  min -= padding;
+  max += padding;
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const x = (time) => pad.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
+  const y = (value) => pad.top + ((max - value) / Math.max(max - min, 1)) * plotHeight;
+  const zeroY = y(0);
+  const yTicks = Array.from({ length: 5 }, (_, index) => min + ((max - min) / 4) * index);
+  const grid = yTicks
+    .map(
+      (tick) =>
+        `<line class="grid-line" x1="${pad.left}" x2="${width - pad.right}" y1="${y(tick).toFixed(1)}" y2="${y(tick).toFixed(
+          1,
+        )}"></line><text class="axis-label" x="${width - pad.right + 8}" y="${(y(tick) + 4).toFixed(1)}" text-anchor="start">${tick.toFixed(
+          1,
+        )}%</text>`,
+    )
+    .join("");
+  const axisPoints = hasHistorySeries
+    ? Array.from({ length: Math.min(6, Math.max(2, Math.ceil(Math.sqrt(times.length)))) }, (_, index) => minTime + ((maxTime - minTime) * index) / Math.max(Math.min(6, Math.max(2, Math.ceil(Math.sqrt(times.length)))) - 1, 1)).map((time) => ({
+        t: time,
+        label: new Date(time).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }),
+      }))
+    : fallbackPeriods.map((period, index) => ({ t: index, label: period.label }));
+  const labels = axisPoints
+    .map((point) => `<text class="axis-label" x="${x(point.t).toFixed(1)}" y="${height - 14}" text-anchor="middle">${point.label}</text>`)
+    .join("");
+  const lines = series
+    .map((line) => {
+      const points = line.points.map((point, index) => `${index === 0 ? "M" : "L"} ${x(point.t).toFixed(1)} ${y(point.value).toFixed(1)}`).join(" ");
+      const dots = line.points
+        .map(
+          (point) =>
+            `<circle cx="${x(point.t).toFixed(1)}" cy="${y(point.value).toFixed(1)}" r="${hasHistorySeries ? 2.4 : 4}" fill="${line.color}"><title>${escapeHtml(
+              line.name,
+            )} ${point.label || new Date(point.t).toLocaleDateString("ko-KR")}: ${point.value.toFixed(2)}%</title></circle>`,
+        )
+        .join("");
+      return `<path class="sector-compare-line" d="${points}" stroke="${line.color}"></path>${dots}`;
+    })
+    .join("");
+  const chartPoints = JSON.stringify(
+    series.map((line) => ({
+      name: line.name,
+      color: line.color,
+      points: line.points.map((point) => ({
+        t: point.t,
+        label: point.label || new Date(point.t).toLocaleDateString("ko-KR"),
+        value: point.value,
+      })),
+    })),
+  );
+  chart.dataset.series = chartPoints;
+  chart.dataset.minTime = String(minTime);
+  chart.dataset.maxTime = String(maxTime);
+  chart.dataset.padLeft = String(pad.left);
+  chart.dataset.padRight = String(pad.right);
+  chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Sector relative performance">
+    ${grid}
+    <line class="zero-line" x1="${pad.left}" x2="${width - pad.right}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}"></line>
+    ${labels}
+    ${lines}
+    <rect class="sector-compare-hover-layer" x="${pad.left}" y="${pad.top}" width="${plotWidth}" height="${plotHeight}" />
+  </svg>
+  <div class="sector-compare-tooltip" id="sectorCompareTooltip" hidden></div>`;
 }
 
 function renderSectorMappingTable(market) {
   const table = document.getElementById("sectorMappingTable");
   const panel = document.getElementById("sectorMappingPanel");
-  if (panel) panel.hidden = market.id !== "kr-combined";
+  if (panel) panel.hidden = !hasSectorMappingTable(market);
   if (!table) return;
-  if (market.id !== "kr-combined") {
+  if (!hasSectorMappingTable(market)) {
     table.innerHTML = "";
     return;
   }
@@ -1139,7 +1421,7 @@ function mappingInlineDetail(items, market) {
   return capWeights(items)
     .sort((a, b) => b.weight - a.weight || b.marketCap - a.marketCap)
     .map(({ item, weight }) => {
-      return `<span class="mapping-stock-chip"><strong>${item.name}</strong><small>${formatMarketCapForRank(
+      return `<span class="mapping-stock-chip"><strong>${sectorDisplayName(item, market)}</strong><small>${formatMarketCapForRank(
         item,
         market,
       )} · 계산비중 ${(weight * 100).toFixed(1)}%</small></span>`;
@@ -1315,6 +1597,8 @@ document.addEventListener("click", (event) => {
   const sectorSpanButton = event.target.closest("[data-sector-span]");
   const sectorPerformanceSortButton = event.target.closest("[data-sector-performance-sort]");
   const sectorActionRegionButton = event.target.closest("[data-sector-action-region]");
+  const sectorComparisonSpanButton = event.target.closest("[data-sector-comparison-span]");
+  const sectorCompareButton = event.target.closest("[data-sector-compare]");
   const mappingRawSectorButton = event.target.closest("[data-mapping-raw-sector]");
 
   if (filterToggle) {
@@ -1397,9 +1681,29 @@ document.addEventListener("click", (event) => {
     state.sectorActionRegionId = sectorActionRegionButton.dataset.sectorActionRegion;
     state.sectorPerformanceSortKey = "";
     state.sectorPerformanceSortDirection = "";
+    state.sectorComparisonSectors = [];
     state.sectorMappingRawSector = "";
     state.sectorMappingStandardSector = "";
     rerender();
+  }
+  if (sectorComparisonSpanButton) {
+    state.sectorComparisonSpanId = sectorComparisonSpanButton.dataset.sectorComparisonSpan;
+    renderSectorPerformanceTable(getSectorActionMarket());
+    saveDashboardState();
+  }
+  if (sectorCompareButton) {
+    const sector = decodeURIComponent(sectorCompareButton.dataset.sectorCompare);
+    const current = Array.isArray(state.sectorComparisonSectors) ? [...state.sectorComparisonSectors] : [];
+    const existingIndex = current.indexOf(sector);
+    if (existingIndex >= 0) {
+      current.splice(existingIndex, 1);
+    } else {
+      if (current.length >= 3) current.shift();
+      current.push(sector);
+    }
+    state.sectorComparisonSectors = current;
+    renderSectorPerformanceTable(getSectorActionMarket());
+    saveDashboardState();
   }
   if (mappingRawSectorButton) {
     state.sectorMappingRawSector = mappingRawSectorButton.dataset.mappingRawSector;
@@ -1536,6 +1840,53 @@ document.addEventListener("pointermove", (event) => {
   const top = event.clientY - panelRect.top - 10;
   tooltip.style.left = `${Math.min(left, chartRect.right - panelRect.left - 150)}px`;
   tooltip.style.top = `${Math.max(top, chartRect.top - panelRect.top + 8)}px`;
+});
+
+document.addEventListener("pointermove", (event) => {
+  const chart = event.target.closest("#sectorCompareChart");
+  const layer = event.target.closest(".sector-compare-hover-layer");
+  const tooltip = document.getElementById("sectorCompareTooltip");
+  if (!chart || !layer || !tooltip || !chart.dataset.series) return;
+  let series = [];
+  try {
+    series = JSON.parse(chart.dataset.series);
+  } catch {
+    return;
+  }
+  const rect = layer.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(rect.width, 1)));
+  const minTime = Number(chart.dataset.minTime || 0);
+  const maxTime = Number(chart.dataset.maxTime || 0);
+  const targetTime = minTime + (maxTime - minTime) * ratio;
+  const rows = series
+    .map((line) => {
+      const nearest = (line.points || []).reduce((best, point) => {
+        if (!best) return point;
+        return Math.abs(point.t - targetTime) < Math.abs(best.t - targetTime) ? point : best;
+      }, null);
+      return nearest ? { ...nearest, name: line.name, color: line.color } : null;
+    })
+    .filter(Boolean);
+  if (!rows.length) return;
+  const dateLabel = rows[0].label || new Date(rows[0].t).toLocaleDateString("ko-KR");
+  tooltip.innerHTML = `<strong>${dateLabel}</strong>${rows
+    .map((row) => {
+      const sign = row.value >= 0 ? "+" : "";
+      return `<span><i style="background:${row.color}"></i>${escapeHtml(row.name)} <em class="${percentClass(row.value)}">${sign}${row.value.toFixed(2)}%</em></span>`;
+    })
+    .join("")}`;
+  tooltip.hidden = false;
+  const panelRect = chart.getBoundingClientRect();
+  const left = event.clientX - panelRect.left + 14;
+  const top = event.clientY - panelRect.top + 12;
+  tooltip.style.left = `${Math.min(left, panelRect.width - 260)}px`;
+  tooltip.style.top = `${Math.max(top, 8)}px`;
+});
+
+document.addEventListener("pointerout", (event) => {
+  if (!event.target.closest(".sector-compare-hover-layer")) return;
+  const tooltip = document.getElementById("sectorCompareTooltip");
+  if (tooltip) tooltip.hidden = true;
 });
 
 document.addEventListener("pointerout", (event) => {

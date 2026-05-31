@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import re
 import ssl
 import sys
 import time
@@ -28,6 +29,9 @@ import pandas as pd
 FINCEPT_YFINANCE = Path(r"C:\Program Files\FinceptTerminal\scripts\yfinance_data.py")
 OUTPUT_PATH = Path(__file__).with_name("market-data.json")
 VOLUME_START_MS = int(datetime(2020, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+HISTORY_START_2000_MS = int(datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+TRIM_HISTORY_FROM_2000 = {"JGBETF", "KTBETF", "HHGAS", "TTFGAS", "N225"}
+SECTOR_HISTORY_DAYS = 150
 
 
 ASSETS = [
@@ -37,6 +41,7 @@ ASSETS = [
         "instruments": [
             {"symbol": "SPX", "sourceSymbol": "^GSPC", "name": "S&P 500"},
             {"symbol": "NDX", "sourceSymbol": "^NDX", "name": "Nasdaq 100"},
+            {"symbol": "BTC", "sourceSymbol": "BTC-USD", "name": "Bitcoin", "unit": "$"},
             {"symbol": "DJI", "sourceSymbol": "^DJI", "name": "Dow Jones"},
             {"symbol": "RUT", "sourceSymbol": "^RUT", "name": "Russell 2000"},
             {"symbol": "STOXX50E", "sourceSymbol": "^STOXX50E", "name": "Euro Stoxx 50"},
@@ -88,8 +93,8 @@ ASSETS = [
             {"symbol": "VIX", "sourceSymbol": "^VIX", "name": "CBOE VIX"},
             {"symbol": "VVIX", "sourceSymbol": "^VVIX", "name": "VVIX"},
             {"symbol": "MOVE", "sourceSymbol": "^MOVE", "name": "MOVE Bond Volatility"},
+            {"symbol": "KRCDS5Y", "sourceSymbol": "INVESTING:KRGV5YUSAC=R", "name": "Korea CDS 5Y", "unit": "bp"},
             {"symbol": "HYG", "sourceSymbol": "HYG", "name": "High Yield ETF"},
-            {"symbol": "TLT", "sourceSymbol": "TLT", "name": "20Y Treasury ETF"},
         ],
     },
 ]
@@ -394,6 +399,44 @@ def korean_sector(sector: Any) -> str:
     return mapping.get(str(sector).strip(), str(sector).strip() or "기타")
 
 
+def spdr_sector(raw_sector: Any) -> str:
+    text = str(raw_sector).strip()
+    mapping = {
+        "Communication Services": "Communication Services (XLC)",
+        "Telecommunications": "Communication Services (XLC)",
+        "Internet": "Communication Services (XLC)",
+        "인터넷": "Communication Services (XLC)",
+        "커뮤니케이션": "Communication Services (XLC)",
+        "Consumer Discretionary": "Consumer Discretionary (XLY)",
+        "Consumer Cyclical": "Consumer Discretionary (XLY)",
+        "Consumer Services": "Consumer Discretionary (XLY)",
+        "소비재·플랫폼": "Consumer Discretionary (XLY)",
+        "자동차": "Consumer Discretionary (XLY)",
+        "Consumer Staples": "Consumer Staples (XLP)",
+        "Consumer Defensive": "Consumer Staples (XLP)",
+        "Energy": "Energy (XLE)",
+        "Financials": "Financials (XLF)",
+        "Financial Services": "Financials (XLF)",
+        "Health Care": "Health Care (XLV)",
+        "Healthcare": "Health Care (XLV)",
+        "Industrials": "Industrials (XLI)",
+        "Industrial Goods": "Industrials (XLI)",
+        "Information Technology": "Technology (XLK)",
+        "Technology": "Technology (XLK)",
+        "Technology Hardware & Equipment": "Technology (XLK)",
+        "Software & Computer Services": "Technology (XLK)",
+        "Semiconductors": "Technology (XLK)",
+        "반도체": "Technology (XLK)",
+        "소프트웨어": "Technology (XLK)",
+        "하드웨어": "Technology (XLK)",
+        "Materials": "Materials (XLB)",
+        "Basic Materials": "Materials (XLB)",
+        "Real Estate": "Real Estate (XLRE)",
+        "Utilities": "Utilities (XLU)",
+    }
+    return mapping.get(text, text or "Other")
+
+
 def concise_industry(value: Any, fallback: str = "기타") -> str:
     text = str(value).strip()
     if not text or text.lower() == "nan":
@@ -448,6 +491,14 @@ def enrich_us_market_caps(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if item["symbol"] in market_caps:
             item["marketCap"] = market_caps[item["symbol"]]
     return items
+
+
+def spdr_fallback_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = []
+    for item in items:
+        raw_sector = item.get("rawSector") or item.get("sector") or "Other"
+        normalized.append({**item, "rawSector": raw_sector, "sector": spdr_sector(raw_sector)})
+    return normalized
 
 
 def krx_index_market(index_code: str, label: str, suffix: str, fallback_items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -542,12 +593,22 @@ def sp500_market() -> dict[str, Any]:
             symbol = str(row["Symbol"]).replace(".", "-").strip()
             curated_item = curated.get(symbol)
             market_cap = curated_item["marketCap"] if curated_item else 1.0
-            sector = curated_item["sector"] if curated_item else korean_sector(row.get("GICS Sector", "기타"))
+            raw_sector = str(row.get("GICS Sector", curated_item.get("sector", "Other") if curated_item else "Other")).strip()
+            sector = spdr_sector(raw_sector)
             name = curated_item["name"] if curated_item else str(row.get("Security", symbol))
-            items.append({"symbol": symbol, "sourceSymbol": symbol, "name": name, "sector": sector, "marketCap": market_cap})
-        return {"id": "sp500", "label": "S&P500", "items": enrich_us_market_caps(items) or SP500_MARKET_MAP}
+            items.append(
+                {
+                    "symbol": symbol,
+                    "sourceSymbol": symbol,
+                    "name": name,
+                    "sector": sector,
+                    "rawSector": raw_sector,
+                    "marketCap": market_cap,
+                }
+            )
+        return {"id": "sp500", "label": "S&P500", "items": enrich_us_market_caps(items) or spdr_fallback_items(SP500_MARKET_MAP)}
     except Exception:
-        return {"id": "sp500", "label": "S&P500", "items": SP500_MARKET_MAP}
+        return {"id": "sp500", "label": "S&P500", "items": spdr_fallback_items(SP500_MARKET_MAP)}
 
 
 def nasdaq100_market() -> dict[str, Any]:
@@ -560,12 +621,22 @@ def nasdaq100_market() -> dict[str, Any]:
             symbol = str(row["Ticker"]).replace(".", "-").strip()
             curated_item = curated.get(symbol)
             market_cap = curated_item["marketCap"] if curated_item else 1.0
-            sector = curated_item["sector"] if curated_item else korean_sector(row_value(row, ["ICB Industry[14]", "ICB Industry"], "기타"))
+            raw_sector = str(row_value(row, ["GICS Sector", "ICB Industry[14]", "ICB Industry"], curated_item.get("sector", "Other") if curated_item else "Other")).strip()
+            sector = spdr_sector(raw_sector)
             name = curated_item["name"] if curated_item else str(row.get("Company", symbol)).replace(" Inc.", "").replace(", Inc.", "").strip()
-            items.append({"symbol": symbol, "sourceSymbol": symbol, "name": name, "sector": sector, "marketCap": market_cap})
+            items.append(
+                {
+                    "symbol": symbol,
+                    "sourceSymbol": symbol,
+                    "name": name,
+                    "sector": sector,
+                    "rawSector": raw_sector,
+                    "marketCap": market_cap,
+                }
+            )
         return {"id": "nasdaq100", "label": "Nasdaq 100", "items": enrich_us_market_caps(items)}
     except Exception:
-        fallback = [item for item in SP500_MARKET_MAP if item["symbol"] in {"MSFT", "AAPL", "NVDA", "AMZN", "META", "AVGO", "GOOGL", "GOOG", "TSLA", "COST"}]
+        fallback = spdr_fallback_items([item for item in SP500_MARKET_MAP if item["symbol"] in {"MSFT", "AAPL", "NVDA", "AMZN", "META", "AVGO", "GOOGL", "GOOG", "TSLA", "COST"}])
         return {"id": "nasdaq100", "label": "Nasdaq 100", "items": fallback}
 
 
@@ -650,20 +721,52 @@ def yahoo_chart(symbol: str, range_: str = "5d", interval: str = "1d") -> dict[s
     }
 
 
+def investing_cds_quote(symbol: str) -> dict[str, Any] | None:
+    if symbol != "INVESTING:KRGV5YUSAC=R":
+        return None
+    url = "https://www.investing.com/rates-bonds/south-korea-cds-5-year-usd"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+    )
+    context = ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=20, context=context) as response:
+        html = response.read().decode("utf-8", errors="ignore")
+    price_match = re.search(r'data-test="instrument-price-last"[^>]*>\s*([0-9.,]+)', html)
+    change_match = re.search(r'data-test="instrument-price-change-percent"[^>]*>\s*\(?([+\-]?[0-9.,]+)%\)?', html)
+    if not price_match:
+        price_match = re.search(r"South Korea CDS 5 Year USD.*?([0-9]{1,3}\.[0-9]{1,2})", html, re.S)
+    if not price_match:
+        return None
+    price = float(price_match.group(1).replace(",", ""))
+    change_percent = float(change_match.group(1).replace(",", "")) if change_match else 0
+    return {"symbol": symbol, "price": round(price, 4), "change_percent": round(change_percent, 2)}
+
+
 def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    yahoo_symbols = [symbol for symbol in symbols if not symbol.startswith("INVESTING:")]
+    manual_symbols = [symbol for symbol in symbols if symbol.startswith("INVESTING:")]
     fincept = load_fincept_module()
     if fincept:
         try:
-            quotes = fincept.get_batch_quotes(symbols)
+            quotes = fincept.get_batch_quotes(yahoo_symbols)
             if isinstance(quotes, list) and quotes:
-                return {item["symbol"]: item for item in quotes if "symbol" in item}
+                results = {item["symbol"]: item for item in quotes if "symbol" in item}
+                for symbol in manual_symbols:
+                    quote = investing_cds_quote(symbol)
+                    if quote:
+                        results[symbol] = quote
+                return results
         except Exception:
             pass
 
     results: dict[str, dict[str, Any]] = {}
     for symbol in symbols:
         try:
-            quote = yahoo_chart(symbol)
+            quote = investing_cds_quote(symbol) if symbol.startswith("INVESTING:") else yahoo_chart(symbol)
             if quote:
                 results[symbol] = quote
         except Exception:
@@ -673,6 +776,8 @@ def get_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
 
 def get_history(symbol: str) -> dict[str, list[dict[str, float]]]:
     history = {"5m": [], "60m": [], "1d": []}
+    if symbol.startswith("INVESTING:"):
+        return history
     requests = [
         ("5m", "60d", "5m"),
         ("60m", "730d", "60m"),
@@ -697,6 +802,15 @@ def get_histories(symbols: list[str]) -> dict[str, dict[str, list[dict[str, floa
             except Exception:
                 histories[symbol] = {"5m": [], "60m": [], "1d": []}
     return histories
+
+
+def trim_history_for_asset(symbol: str, history: dict[str, list[dict[str, float]]]) -> dict[str, list[dict[str, float]]]:
+    if symbol not in TRIM_HISTORY_FROM_2000:
+        return history
+    return {
+        interval: [row for row in rows if int(row.get("t", 0) or 0) >= HISTORY_START_2000_MS]
+        for interval, rows in history.items()
+    }
 
 
 def get_market_map_history(symbol: str) -> list[dict[str, float]]:
@@ -745,6 +859,16 @@ def ytd_change(daily: list[dict[str, float]]) -> float:
     return round(((latest - baseline) / baseline) * 100, 2)
 
 
+def compact_sector_history(daily: list[dict[str, float]]) -> list[list[float]]:
+    compacted = []
+    for row in daily[-SECTOR_HISTORY_DAYS:]:
+        close = float(row.get("c", 0) or 0)
+        timestamp = int(row.get("t", 0) or 0)
+        if timestamp and close:
+            compacted.append([timestamp, round(close, 4)])
+    return compacted
+
+
 def build_sector_markets(
     market_sources: list[dict[str, Any]],
     quotes: dict[str, dict[str, Any]],
@@ -770,9 +894,11 @@ def build_sector_markets(
                 "symbol": source["symbol"],
                 "name": source["name"],
                 "sector": source["sector"],
+                "rawSector": source.get("rawSector", source["sector"]),
                 "marketCap": source["marketCap"],
                 "price": round(price, 2),
                 "changes": changes,
+                "history": compact_sector_history(daily),
             }
             if not daily and not quote:
                 item["stale"] = True
@@ -804,7 +930,7 @@ def apply_quotes(
         for item in asset["instruments"]:
             source = item["sourceSymbol"]
             quote = quotes.get(source)
-            item["history"] = histories.get(source, {"5m": [], "60m": [], "1d": []})
+            item["history"] = trim_history_for_asset(item["symbol"], histories.get(source, {"5m": [], "60m": [], "1d": []}))
             daily = item["history"].get("1d", [])
             if not quote:
                 item["price"] = round(float(daily[-1]["c"]), 4) if daily else 0

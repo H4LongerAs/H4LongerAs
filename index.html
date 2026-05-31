@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>H4LongerAsset</title>
-    <link rel="stylesheet" href="./styles.css?v=20260531-20" />
+    <link rel="stylesheet" href="./styles.css?v=20260531-26" />
   </head>
   <body>
     <main class="dashboard-shell">
@@ -180,6 +180,17 @@
               <tbody id="sectorPerformanceTable"></tbody>
             </table>
           </div>
+          <div class="sector-compare-panel" id="sectorComparePanel">
+            <div class="rank-panel-header">
+              <div>
+                <span class="control-label">Relative Performance</span>
+                <h3>섹터 상대성과</h3>
+              </div>
+              <div class="compare-range-tabs" id="sectorCompareSpanTabs"></div>
+            </div>
+            <div class="compare-selection" id="sectorCompareSelection"></div>
+            <div class="sector-compare-chart" id="sectorCompareChart"></div>
+          </div>
           <div class="mapping-panel" id="sectorMappingPanel">
             <div class="rank-panel-header">
               <div>
@@ -228,6 +239,6 @@
     </main>
 
     <script src="./data.js?v=20260531-3"></script>
-    <script src="./app.js?v=20260531-21"></script>
+    <script src="./app.js?v=20260531-26"></script>
   </body>
 </html>

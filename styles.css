@@ -926,6 +926,157 @@ h1 {
   font-weight: 900;
 }
 
+.benchmark-row td {
+  background: #f9fbff;
+}
+
+.sector-compare-toggle {
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  text-align: left;
+}
+
+.sector-compare-toggle:hover,
+.sector-compare-toggle.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.sector-compare-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.sector-compare-panel[hidden] {
+  display: none;
+}
+
+.compare-range-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.compare-range-tabs .tab-button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.compare-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 31px;
+  margin-bottom: 8px;
+}
+
+.compare-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--compare-color);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sector-compare-chart {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  overflow: hidden;
+}
+
+.sector-compare-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sector-compare-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sector-compare-hover-layer {
+  fill: transparent;
+}
+
+.sector-compare-tooltip {
+  position: absolute;
+  z-index: 8;
+  min-width: 230px;
+  max-width: 270px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 28px rgba(36, 51, 72, 0.16);
+  color: var(--text);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.sector-compare-tooltip[hidden] {
+  display: none;
+}
+
+.sector-compare-tooltip strong,
+.sector-compare-tooltip span {
+  display: block;
+}
+
+.sector-compare-tooltip span {
+  margin-top: 6px;
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.sector-compare-tooltip i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.sector-compare-tooltip em {
+  float: right;
+  font-style: normal;
+}
+
+.zero-line {
+  stroke: #9ca3af;
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+}
+
+.empty-chart {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: var(--muted);
+  font-weight: 900;
+}
+
 .mapping-detail-row td {
   background: #f8fbff;
   color: var(--text);

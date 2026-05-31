@@ -358,6 +358,20 @@ def sector_rank_maps(existing_data: dict[str, Any]) -> dict[str, dict[str, int]]
 
 MARKET_MAP_PERIODS = {"1d": 1, "1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252}
 
+SPDR_SECTOR_ETFS = [
+    {"sector": "Communication Services (XLC)", "symbol": "XLC", "name": "Communication Services Select Sector SPDR"},
+    {"sector": "Consumer Discretionary (XLY)", "symbol": "XLY", "name": "Consumer Discretionary Select Sector SPDR"},
+    {"sector": "Consumer Staples (XLP)", "symbol": "XLP", "name": "Consumer Staples Select Sector SPDR"},
+    {"sector": "Energy (XLE)", "symbol": "XLE", "name": "Energy Select Sector SPDR"},
+    {"sector": "Financials (XLF)", "symbol": "XLF", "name": "Financial Select Sector SPDR"},
+    {"sector": "Health Care (XLV)", "symbol": "XLV", "name": "Health Care Select Sector SPDR"},
+    {"sector": "Industrials (XLI)", "symbol": "XLI", "name": "Industrial Select Sector SPDR"},
+    {"sector": "Materials (XLB)", "symbol": "XLB", "name": "Materials Select Sector SPDR"},
+    {"sector": "Real Estate (XLRE)", "symbol": "XLRE", "name": "Real Estate Select Sector SPDR"},
+    {"sector": "Technology (XLK)", "symbol": "XLK", "name": "Technology Select Sector SPDR"},
+    {"sector": "Utilities (XLU)", "symbol": "XLU", "name": "Utilities Select Sector SPDR"},
+]
+
 
 def load_finance_datareader() -> Any | None:
     try:
@@ -869,6 +883,32 @@ def compact_sector_history(daily: list[dict[str, float]]) -> list[list[float]]:
     return compacted
 
 
+def build_sector_etfs(
+    quotes: dict[str, dict[str, Any]],
+    histories: dict[str, list[dict[str, float]]],
+) -> dict[str, dict[str, Any]]:
+    etfs: dict[str, dict[str, Any]] = {}
+    for source in SPDR_SECTOR_ETFS:
+        symbol = source["symbol"]
+        quote = quotes.get(symbol)
+        daily = histories.get(symbol, [])
+        price = float(quote.get("price", 0)) if quote else 0
+        if not price and daily:
+            price = float(daily[-1]["c"])
+        changes = {period: period_change(daily, lookback) for period, lookback in MARKET_MAP_PERIODS.items()}
+        if quote and quote.get("change_percent") is not None:
+            changes["1d"] = round(float(quote.get("change_percent", 0)), 2)
+        changes["ytd"] = ytd_change(daily)
+        etfs[source["sector"]] = {
+            "symbol": symbol,
+            "name": source["name"],
+            "price": round(price, 2),
+            "changes": changes,
+            "history": compact_sector_history(daily),
+        }
+    return etfs
+
+
 def build_sector_markets(
     market_sources: list[dict[str, Any]],
     quotes: dict[str, dict[str, Any]],
@@ -987,10 +1027,15 @@ def main() -> int:
         sector_market_sources = get_sector_markets()
     symbols = [item["sourceSymbol"] for asset in ASSETS for item in asset["instruments"]]
     sector_symbols = [] if market_only else [item["sourceSymbol"] for market in sector_market_sources for item in market["items"]]
-    quotes = get_quotes(symbols + sector_symbols)
+    sector_etf_symbols = [source["symbol"] for source in SPDR_SECTOR_ETFS] if (not market_only and (not selective_sector or update_us_sector)) else []
+    quotes = get_quotes(symbols + sector_symbols + sector_etf_symbols)
     histories = get_histories(symbols)
     sector_histories = {} if market_only else get_market_map_histories(sector_symbols)
+    sector_etf_histories = get_market_map_histories(sector_etf_symbols) if sector_etf_symbols else {}
     assets = apply_quotes(quotes, histories)
+    sector_etfs = existing_data.get("sectorEtfs", {})
+    if sector_etf_symbols:
+        sector_etfs = build_sector_etfs(quotes, sector_etf_histories)
     if market_only:
         sector_markets = existing_data.get("sectorMarkets", [])
     elif selective_sector:
@@ -1013,12 +1058,13 @@ def main() -> int:
         },
         "assets": assets,
         "sectorMarkets": sector_markets,
+        "sectorEtfs": sector_etfs,
     }
     OUTPUT_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Wrote {OUTPUT_PATH}")
     loaded_history = sum(1 for symbol in symbols if histories.get(symbol, {}).get("1d"))
     loaded_sector_history = sum(1 for symbol in sector_symbols if sector_histories.get(symbol))
-    print(f"Loaded {len(quotes)} of {len(symbols) + len(sector_symbols)} quotes")
+    print(f"Loaded {len(quotes)} of {len(symbols) + len(sector_symbols) + len(sector_etf_symbols)} quotes")
     print(f"Loaded {loaded_history} of {len(symbols)} max daily histories")
     if market_only:
         print(f"Kept {len(sector_markets)} existing sector market datasets")

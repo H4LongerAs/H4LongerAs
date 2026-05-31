@@ -66,6 +66,26 @@ const sectorComparisonPeriods = [
 ];
 
 const sectorComparisonColors = ["#2563eb", "#16a34a", "#dc2626"];
+const sectorPeriodLookbacks = { "1d": 1, "1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252 };
+const benchmarkIndexSymbols = {
+  kospi200: "KOSPI200",
+  kosdaq150: "KOSDAQ150",
+  sp500: "SPX",
+  nasdaq100: "NDX",
+};
+const usSectorEtfSymbols = {
+  "Communication Services (XLC)": "XLC",
+  "Consumer Discretionary (XLY)": "XLY",
+  "Consumer Staples (XLP)": "XLP",
+  "Energy (XLE)": "XLE",
+  "Financials (XLF)": "XLF",
+  "Health Care (XLV)": "XLV",
+  "Industrials (XLI)": "XLI",
+  "Materials (XLB)": "XLB",
+  "Real Estate (XLRE)": "XLRE",
+  "Technology (XLK)": "XLK",
+  "Utilities (XLU)": "XLU",
+};
 
 const sectorActionRegions = [
   { id: "kr", label: "한국" },
@@ -519,6 +539,55 @@ function capWeightedChange(items, periodId, cap = 0.2) {
   }, 0);
 }
 
+function dailyBarsForInstrument(symbol) {
+  const instrument = findInstrument(symbol);
+  return instrument?.history?.["1d"]?.length ? instrument.history["1d"].map(normalizeBar) : [];
+}
+
+function barsLookbackChange(bars, lookback) {
+  if (bars.length <= lookback) return 0;
+  const latest = Number(bars.at(-1).c || 0);
+  const previous = Number(bars.at(-1 - lookback).c || 0);
+  return previous ? ((latest - previous) / previous) * 100 : 0;
+}
+
+function barsYtdChange(bars) {
+  if (bars.length < 2) return 0;
+  const latest = bars.at(-1);
+  const latestClose = Number(latest.c || 0);
+  const latestYear = new Date(latest.t).getFullYear();
+  const baseline = bars.find((bar) => new Date(bar.t).getFullYear() === latestYear);
+  const baselineClose = Number(baseline?.c || 0);
+  return baselineClose ? ((latestClose - baselineClose) / baselineClose) * 100 : 0;
+}
+
+function sectorEtfData(sector) {
+  return marketData.sectorEtfs?.[sector] || null;
+}
+
+function normalizeCompactHistory(rows = []) {
+  return rows
+    .map((row) => {
+      if (Array.isArray(row)) return { t: Number(row[0]), c: Number(row[1]) };
+      return { t: Number(row.t), c: Number(row.c) };
+    })
+    .filter((row) => row.t && row.c)
+    .sort((a, b) => a.t - b.t);
+}
+
+function benchmarkIndexChanges(indexSymbol) {
+  const instrument = findInstrument(indexSymbol);
+  const bars = dailyBarsForInstrument(indexSymbol);
+  if (!instrument || !bars.length) return null;
+  return Object.fromEntries(
+    sectorPerformancePeriods.map((period) => {
+      if (period.id === "1d" && Number.isFinite(Number(instrument.change))) return [period.id, Number(instrument.change)];
+      if (period.id === "ytd") return [period.id, barsYtdChange(bars)];
+      return [period.id, barsLookbackChange(bars, sectorPeriodLookbacks[period.id] || 1)];
+    }),
+  );
+}
+
 function capWeights(items, cap = 0.2) {
   const weightedItems = items
     .map((item) => ({ item, marketCap: Math.max(Number(item.marketCap || 0), 0) }))
@@ -526,6 +595,14 @@ function capWeights(items, cap = 0.2) {
   const totalMarketCap = weightedItems.reduce((sum, entry) => sum + entry.marketCap, 0);
   if (!totalMarketCap) return [];
   const weights = weightedItems.map((entry) => entry.marketCap / totalMarketCap);
+  if (cap == null || cap >= 1) {
+    return weightedItems.map((entry, index) => ({
+      item: entry.item,
+      marketCap: entry.marketCap,
+      rawWeight: weights[index],
+      weight: weights[index],
+    }));
+  }
   const capped = new Set(weights.map((weight, index) => (weight > cap ? index : -1)).filter((index) => index >= 0));
   const cappedTotal = capped.size * cap;
   const uncappedTotal = weights.reduce((sum, weight, index) => (capped.has(index) ? sum : sum + weight), 0);
@@ -550,8 +627,12 @@ function getSectorPerformanceRows(market) {
     group.items.push(item);
   });
   const rows = [...groups.values()].map((group) => {
+    const etf = isUsSectorMarket(market) ? sectorEtfData(group.sector) : null;
+    group.etfSymbol = etf?.symbol || usSectorEtfSymbols[group.sector] || null;
+    group.etfName = etf?.name || null;
     sectorPerformancePeriods.forEach((period) => {
-      group.changes[period.id] = capWeightedChange(group.items, period.id);
+      group.changes[period.id] =
+        etf?.changes?.[period.id] !== undefined ? Number(etf.changes[period.id]) : capWeightedChange(group.items, period.id);
     });
     group.leader = group.items.slice().sort((a, b) => Number(b.marketCap || 0) - Number(a.marketCap || 0))[0];
     return group;
@@ -576,8 +657,8 @@ function activeContributionPeriod() {
   return state.sectorPerformanceSortKey || "1d";
 }
 
-function topSectorContributors(items, periodId, market) {
-  return capWeights(items)
+function topSectorContributors(items, periodId, market, cap = 0.2) {
+  return capWeights(items, cap)
     .map(({ item, weight }) => ({
       item,
       impact: weight * Number(item.changes?.[periodId] ?? 0),
@@ -591,23 +672,41 @@ function topSectorContributors(items, periodId, market) {
     .join("");
 }
 
+function sectorReferenceCell(row, periodId, market) {
+  if (row.etfSymbol) {
+    return `<span>ETF ${escapeHtml(row.etfSymbol)} <em class="${percentClass(row.changes?.[periodId])}">${formatPercent(
+      row.changes?.[periodId],
+    )}</em></span>`;
+  }
+  return topSectorContributors(row.items, periodId, market, row.weightCap === undefined ? 0.2 : row.weightCap);
+}
+
 function getBenchmarkRows(market) {
-  if (market.id !== "kr-combined") return [];
-  const benchmarkIds = ["kospi200", "kosdaq150"];
+  const benchmarkIdsByMarket = {
+    "kr-combined": ["kospi200", "kosdaq150"],
+    "us-combined": ["sp500", "nasdaq100"],
+  };
+  const benchmarkIds = benchmarkIdsByMarket[market.id] || [];
+  if (!benchmarkIds.length) return [];
   return getSectorMarkets()
     .filter((sourceMarket) => benchmarkIds.includes(sourceMarket.id))
     .map((sourceMarket) => {
+      const indexSymbol = benchmarkIndexSymbols[sourceMarket.id];
+      const indexChanges = indexSymbol ? benchmarkIndexChanges(indexSymbol) : null;
       const row = {
         sector: sourceMarket.label,
         marketCap: (sourceMarket.items || []).reduce((sum, item) => sum + Number(item.marketCap || 0), 0),
         count: sourceMarket.items?.length || 0,
         items: sourceMarket.items || [],
-        changes: {},
+        changes: indexChanges || {},
         leader: null,
         isBenchmark: true,
+        indexSymbol,
+        weightCap: null,
       };
       sectorPerformancePeriods.forEach((period) => {
-        row.changes[period.id] = capWeightedChange(row.items, period.id);
+        if (indexChanges) return;
+        row.changes[period.id] = capWeightedChange(row.items, period.id, row.weightCap);
       });
       row.leader = row.items.slice().sort((a, b) => Number(b.marketCap || 0) - Number(a.marketCap || 0))[0];
       return row;
@@ -670,8 +769,61 @@ function weeklySample(points) {
   return [...buckets.values()].sort((a, b) => a.t - b.t);
 }
 
+function comparisonStartTimeFromLast(lastTime, spanId) {
+  const start = new Date(lastTime);
+  if (spanId === "ytd") {
+    start.setMonth(0, 1);
+  } else {
+    const months = { "1m": 1, "3m": 3, "6m": 6, "1y": 12 }[spanId] || 6;
+    start.setMonth(start.getMonth() - months);
+  }
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
+function indexRelativeSeries(indexSymbol, spanId) {
+  const bars = dailyBarsForInstrument(indexSymbol);
+  if (bars.length < 2) return [];
+  const startTime = comparisonStartTimeFromLast(bars.at(-1).t, spanId);
+  const points = bars.filter((bar) => bar.t >= startTime);
+  if (points.length < 2) return [];
+  const baseline = Number(points[0].c || 0);
+  if (!baseline) return [];
+  const series = points.map((point) => ({
+    t: point.t,
+    label: new Date(point.t).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }),
+    value: (Number(point.c || 0) / baseline - 1) * 100,
+  }));
+  return spanId === "1m" ? series : weeklySample(series);
+}
+
+function etfRelativeSeries(row, spanId) {
+  const etf = sectorEtfData(row.sector);
+  const points = normalizeCompactHistory(etf?.history);
+  if (points.length < 2) return [];
+  const startTime = comparisonStartTimeFromLast(points.at(-1).t, spanId);
+  const filtered = points.filter((point) => point.t >= startTime);
+  if (filtered.length < 2) return [];
+  const baseline = Number(filtered[0].c || 0);
+  if (!baseline) return [];
+  const series = filtered.map((point) => ({
+    t: point.t,
+    label: new Date(point.t).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }),
+    value: (Number(point.c || 0) / baseline - 1) * 100,
+  }));
+  return spanId === "1m" ? series : weeklySample(series);
+}
+
 function sectorRelativeSeries(row, spanId) {
-  const weightedItems = capWeights(row.items || []);
+  if (row.indexSymbol) {
+    const indexSeries = indexRelativeSeries(row.indexSymbol, spanId);
+    if (indexSeries.length >= 2) return indexSeries;
+  }
+  if (row.etfSymbol) {
+    const etfSeries = etfRelativeSeries(row, spanId);
+    if (etfSeries.length >= 2) return etfSeries;
+  }
+  const weightedItems = capWeights(row.items || [], row.weightCap === undefined ? 0.2 : row.weightCap);
   const startTime = sectorComparisonStartTime(
     weightedItems.map((entry) => entry.item),
     spanId,
@@ -1223,9 +1375,11 @@ function renderSectorPerformanceTable(market) {
   const contributionPeriod = activeContributionPeriod();
   const contributionLabel = sectorPerformancePeriods.find((period) => period.id === contributionPeriod)?.label || "1D";
   document.getElementById("sectorPerformanceTitle").textContent = `${market.label} 주도섹터`;
-  document.getElementById("sectorPerformanceMeta").textContent = `${rows.length}개 업종 · 20% Cap 시총가중 성과 · 기여종목 ${contributionLabel}`;
+  const performanceBasis = isUsSectorMarket(market) ? "SPDR 섹터 ETF 성과" : "20% Cap 시총가중 성과";
+  const referenceLabel = isUsSectorMarket(market) ? "ETF 기준" : "기여종목";
+  document.getElementById("sectorPerformanceMeta").textContent = `${rows.length}개 업종 · ${performanceBasis} · ${referenceLabel} ${contributionLabel}`;
   const contributorHeader = document.getElementById("sectorContributorHeader") || document.querySelector(".performance-table thead th:nth-child(3)");
-  if (contributorHeader) contributorHeader.textContent = `기여종목 ${contributionLabel}`;
+  if (contributorHeader) contributorHeader.textContent = `${referenceLabel} ${contributionLabel}`;
   sectorPerformancePeriods.forEach((period) => {
     const button = document.querySelector(`[data-sector-performance-sort="${period.id}"]`);
     if (button) button.textContent = `${period.label}${sectorPerformanceSortMark(period.id)}`;
@@ -1241,7 +1395,7 @@ function renderSectorPerformanceTable(market) {
             row.sector,
           )}" type="button">${escapeHtml(row.sector)}</button>
         </td>
-        <td class="contributor-cell">${topSectorContributors(row.items, contributionPeriod, market)}</td>
+        <td class="contributor-cell">${sectorReferenceCell(row, contributionPeriod, market)}</td>
         ${sectorPerformancePeriods
           .map((period) => `<td class="${percentClass(row.changes[period.id])}">${formatPercent(row.changes[period.id])}</td>`)
           .join("")}

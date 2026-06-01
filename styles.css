@@ -73,6 +73,12 @@ h1 {
   white-space: nowrap;
 }
 
+.status-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
 .status-dot {
   width: 9px;
   height: 9px;

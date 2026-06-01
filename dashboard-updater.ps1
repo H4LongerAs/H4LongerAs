@@ -23,6 +23,8 @@ function Write-Log {
 Write-Log "Updater started."
 
 $krSectorRefreshTimes = @(
+  @{ Hour = 9; Minute = 30 },
+  @{ Hour = 13; Minute = 0 },
   @{ Hour = 16; Minute = 0 }
 )
 $usSectorRefreshTimes = @(

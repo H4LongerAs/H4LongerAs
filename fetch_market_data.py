@@ -1060,7 +1060,7 @@ def main() -> int:
         "sectorMarkets": sector_markets,
         "sectorEtfs": sector_etfs,
     }
-    OUTPUT_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    OUTPUT_PATH.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"Wrote {OUTPUT_PATH}")
     loaded_history = sum(1 for symbol in symbols if histories.get(symbol, {}).get("1d"))
     loaded_sector_history = sum(1 for symbol in sector_symbols if sector_histories.get(symbol))

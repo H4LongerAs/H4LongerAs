@@ -432,6 +432,31 @@ function isUsSectorMarket(market = getSectorMarket()) {
   return ["sp500", "nasdaq100", "us-combined"].includes(market?.id);
 }
 
+function sectorUpdateSchedule(market = getSectorMarket(), sectionId = state.sectorSectionId) {
+  if (isUsSectorMarket(market)) return "업데이트 주기: 한국시간 08:00";
+  return sectionId === "marketmap" ? "업데이트 주기: 한국시간 09:30 / 13:00 / 16:00" : "업데이트 주기: 한국시간 16:00";
+}
+
+function sectorUpdatedAtSummary() {
+  const markets = getSectorMarkets();
+  const krUpdatedAt = markets
+    .filter((market) => ["kospi200", "kosdaq150"].includes(market.id))
+    .map((market) => market.updatedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  const usUpdatedAt = markets
+    .filter((market) => ["sp500", "nasdaq100"].includes(market.id))
+    .map((market) => market.updatedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  if (krUpdatedAt && usUpdatedAt) return `Sector KR ${krUpdatedAt} / US ${usUpdatedAt}`;
+  if (krUpdatedAt) return `Sector KR ${krUpdatedAt}`;
+  if (usUpdatedAt) return `Sector US ${usUpdatedAt}`;
+  return `Sector ${marketData.updatedAt || "--"}`;
+}
+
 function sectorDisplayName(item, market = getSectorMarket()) {
   if (!isUsSectorMarket(market)) return item.name;
   return `${item.name} (${item.symbol})`;
@@ -1128,7 +1153,8 @@ function renderPageView() {
 function renderStatus() {
   const kospi = findInstrument("KOSPI");
   const nasdaq = findInstrument("NDX");
-  document.getElementById("updatedAt").textContent = `Updated ${marketData.updatedAt}`;
+  document.getElementById("marketUpdatedAt").textContent = `Market ${marketData.updatedAt || "--"}`;
+  document.getElementById("sectorDataUpdatedAt").textContent = sectorUpdatedAtSummary();
   document.getElementById("riskMode").textContent = marketData.status.riskMode;
   document.getElementById("kospiValue").textContent = fmt.format(kospi?.price ?? marketData.status.kospi ?? 0);
   document.getElementById("nasdaqValue").textContent = fmt.format(nasdaq?.price ?? marketData.status.nasdaq ?? 0);
@@ -1308,7 +1334,10 @@ function renderSectorMap() {
   const isActionsSection = state.sectorSectionId === "actions";
   document.querySelector("#sectorView h2").textContent = isActionsSection ? `${market.label} Sector Actions` : `${market.label} Market Map`;
   document.getElementById("sectorMapDescription").textContent = view.description;
-  document.getElementById("sectorUpdatedAt").textContent = `Updated ${market.updatedAt || marketData.updatedAt || "--"}`;
+  document.getElementById("sectorUpdatedAt").textContent = `Updated ${market.updatedAt || marketData.updatedAt || "--"} · ${sectorUpdateSchedule(
+    market,
+    state.sectorSectionId,
+  )}`;
   document.getElementById("marketMapBlock").hidden = !isMarketMapSection;
   document.getElementById("sectorMapMeta").hidden = !isMarketMapSection;
   document.getElementById("sectorMapLegend").hidden = !isMarketMapSection;
@@ -1377,7 +1406,10 @@ function renderSectorPerformanceTable(market) {
   document.getElementById("sectorPerformanceTitle").textContent = `${market.label} 주도섹터`;
   const performanceBasis = isUsSectorMarket(market) ? "SPDR 섹터 ETF 성과" : "20% Cap 시총가중 성과";
   const referenceLabel = isUsSectorMarket(market) ? "ETF 기준" : "기여종목";
-  document.getElementById("sectorPerformanceMeta").textContent = `${rows.length}개 업종 · ${performanceBasis} · ${referenceLabel} ${contributionLabel}`;
+  document.getElementById("sectorPerformanceMeta").textContent = `${rows.length}개 업종 · ${performanceBasis} · ${referenceLabel} ${contributionLabel} · ${sectorUpdateSchedule(
+    market,
+    "actions",
+  )}`;
   const contributorHeader = document.getElementById("sectorContributorHeader") || document.querySelector(".performance-table thead th:nth-child(3)");
   if (contributorHeader) contributorHeader.textContent = `${referenceLabel} ${contributionLabel}`;
   sectorPerformancePeriods.forEach((period) => {
